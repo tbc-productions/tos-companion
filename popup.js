@@ -52,18 +52,24 @@ function send(msg) {
   return chrome.runtime.sendMessage(msg);
 }
 
-// "2026-11-18 00:00:38" -> "3 days ago"
-function relativeTime(s) {
-  const d = new Date(String(s).replace(' ', 'T'));
-  if (isNaN(d)) return s || '';
-  const sec = Math.round((Date.now() - d.getTime()) / 1000);
-  if (sec < 60) return 'just now';
+// Seconds elapsed -> "3 days ago"; under a minute is "just now" unless withSeconds.
+function agoText(sec, withSeconds = false) {
+  sec = Math.max(0, Math.floor(sec));
+  if (withSeconds && sec < 5) return 'just now';
+  if (withSeconds && sec < 60) return `${sec} seconds ago`;
   const units = [['year', 31536000], ['month', 2592000], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60]];
   for (const [u, n] of units) {
     const v = Math.floor(sec / n);
     if (v >= 1) return `${v} ${u}${v === 1 ? '' : 's'} ago`;
   }
   return 'just now';
+}
+
+// "2026-11-18 00:00:38" -> "3 days ago"
+function relativeTime(s) {
+  const d = new Date(String(s).replace(' ', 'T'));
+  if (isNaN(d)) return s || '';
+  return agoText((Date.now() - d.getTime()) / 1000);
 }
 
 // ---- State ----
@@ -90,7 +96,7 @@ function loading(panel) {
 function showSignedOut() {
   if (state.signedOut) return;
   state.signedOut = true;
-  clearInterval(overviewTimer);
+  stopOverviewTimer();
   $('#tabs').style.visibility = 'hidden'; // preserve layout for the settings button
   for (const s of document.querySelectorAll('[data-panel]')) { s.hidden = true; s.replaceChildren(); }
   const panel = $('#panel-empty');
@@ -514,8 +520,36 @@ function card(title, ...rows) {
 
 const LIVE_ONLY = 'Open TOS for this';
 
+// Stats older than this are hidden: at least 15 s, or three polling intervals.
+function staleAfterMs() {
+  const sec = Math.max(1, Number(state.settings.popup.statsIntervalSec) || 5);
+  return Math.max(15, sec * 3) * 1000;
+}
+
+let staleTimer = null;
+
+function updatedText(ts) {
+  const s = agoText((Date.now() - ts) / 1000, true);
+  return 'Updated ' + s;
+}
+
+// Keeps the relative "Updated …" label current between redraws.
+let updatedTicker = null;
+function startUpdatedTicker() {
+  if (updatedTicker) return;
+  updatedTicker = setInterval(() => {
+    const u = document.querySelector('#panel-overview .updated');
+    if (u && u.dataset.ts) u.textContent = updatedText(Number(u.dataset.ts));
+  }, 1000);
+}
+
 function drawOverview(panel, data) {
-  const { info = {}, volumes = [], usage = {}, live } = data;
+  const now = Date.now();
+  const maxAge = staleAfterMs();
+  const isFresh = (ts) => !!ts && now - ts < maxAge;
+  const live = isFresh(data.liveTs) ? data.live : null;
+  const usage = (isFresh(data.usageTs) && data.usage) || {};
+  const { info = {}, volumes = [] } = data;
   const L = live || {};
   const load = L.load, cpu = L.cpu, mem = L.mem, temp = L.temp;
   const net = Array.isArray(L.net) ? (L.net.find((n) => n.if === 'all') || L.net[0]) : L.net;
@@ -547,8 +581,8 @@ function drawOverview(panel, data) {
       statRow('Uptime', info.uptime ? fmtUptime(info.uptime + (data.ts ? (Date.now() - data.ts) / 1000 : 0)) : '–')),
     card('Resources',
       statRow('Load', load ? `${load.one} · ${load.five} · ${load.fifteen}` : dash(), load && load.pro != null ? bar(load.pro) : null),
-      statRow('CPU', fmtPct(cpuPct), cpuPct != null ? bar(cpuPct) : null),
-      statRow('Memory', memText, memPct != null ? bar(memPct) : null)),
+      statRow('CPU', cpuPct != null ? fmtPct(cpuPct) : dash(), cpuPct != null ? bar(cpuPct) : null),
+      statRow('Memory', memPct != null ? memText : dash(), memPct != null ? bar(memPct) : null)),
     card('Network',
       statRow('Upload', net ? fmtRate(net.up) : dash()),
       statRow('Download', net ? fmtRate(net.down) : dash()))
@@ -574,15 +608,32 @@ function drawOverview(panel, data) {
   hw.push(statRow('Fan speed', temp && temp.fan != null ? `${temp.fan} RPM` : dash()));
   nodes.push(card('Hardware', ...hw));
 
-  if (!live) {
+  // Hold the note while the subscription waits for its first sample (~5 s).
+  if (!live && !(liveSub && liveSub.status === 'connecting')) {
     nodes.push(el('div', { class: 'note' },
-      el('span', {}, 'Load, network, temperatures and fan speed show while a TOS tab is open.'),
+      el('span', {}, 'Couldn’t get live stats from TOS. Load, network, temperatures and fan speed show while a TOS tab is open.'),
       el('button', { class: 'btn link', onclick: () => { chrome.tabs.create({ url: state.host + '/tos/', active: false }); setTimeout(refreshOverview, 4000); } }, 'Open TOS')));
+  }
+
+  const lastTs = Math.max(data.liveTs || 0, data.usageTs || 0);
+  if (lastTs) {
+    const d = new Date(lastTs);
+    nodes.push(el('div', { class: 'updated', title: d.toLocaleString(), 'data-ts': String(lastTs) }, updatedText(lastTs)));
   }
 
   const scroll = panel.parentElement ? panel.parentElement.scrollTop : 0;
   panel.replaceChildren(...nodes);
   if (panel.parentElement) panel.parentElement.scrollTop = scroll;
+
+  // Redraw when the oldest shown values go stale, in case polling has stalled.
+  clearTimeout(staleTimer);
+  const shown = [live && data.liveTs, usage.cpu != null && data.usageTs].filter(Boolean);
+  if (shown.length) {
+    const wait = Math.min(...shown) + maxAge - now;
+    staleTimer = setTimeout(() => {
+      if (state.tab === 'overview' && overviewData) drawOverview(panel, overviewData);
+    }, Math.max(0, wait) + 50);
+  }
 }
 
 async function loadOverviewCache() {
@@ -603,12 +654,51 @@ let overviewTimer = null;
 let overviewBusy = false;
 let updateChecking = false;
 
+// Live subscription held open (via the background) while Overview is shown.
+// status: 'connecting' until the first sample, then 'ok', or 'failed'.
+let liveSub = null;
+
+function startLiveSub() {
+  if (liveSub) return;
+  const sub = { port: chrome.runtime.connect({ name: 'liveStats' }), sample: null, ts: 0, status: 'connecting' };
+  liveSub = sub;
+  sub.port.onMessage.addListener((msg) => {
+    if (liveSub !== sub) return;
+    if (msg.type === 'stats') {
+      const first = sub.status !== 'ok';
+      sub.sample = msg.data;
+      sub.ts = Date.now();
+      sub.status = 'ok';
+      // Show the first sample straight away rather than waiting for the next tick.
+      if (first && overviewData && overviewData.info && !overviewBusy) {
+        overviewData = { ...overviewData, live: sub.sample, liveTs: sub.ts };
+        if (state.tab === 'overview') drawOverview($('#panel-overview'), overviewData);
+      }
+    } else if (msg.type === 'error') {
+      sub.status = 'failed';
+      if (overviewData && state.tab === 'overview') drawOverview($('#panel-overview'), overviewData);
+    }
+  });
+  sub.port.onDisconnect.addListener(() => { if (liveSub === sub) sub.status = 'failed'; });
+  sub.port.postMessage({ host: state.host });
+}
+
+function stopLiveSub() {
+  if (!liveSub) return;
+  try { liveSub.port.disconnect(); } catch (e) { /* ignore */ }
+  liveSub = null;
+}
+
+// Latest live stats as { live, ts }: the subscription's newest sample, else an open TOS tab.
 async function fetchLive() {
+  if (liveSub && liveSub.sample && Date.now() - liveSub.ts < staleAfterMs()) {
+    return { live: liveSub.sample, ts: liveSub.ts };
+  }
   try {
     const res = await send({ type: 'liveStats', hosts: state.nas.addresses });
-    return res && res.ok ? res.result : null;
+    return res && res.ok && res.result ? { live: res.result, ts: Date.now() } : { live: null };
   } catch (e) {
-    return null;
+    return { live: null };
   }
 }
 
@@ -619,14 +709,15 @@ async function refreshOverview(full = false) {
   const panel = $('#panel-overview');
   try {
     if (full || !overviewData || !overviewData.fresh) {
-      const [info, volumes, live] = await Promise.all([state.api.systemInfo(), state.api.volumes(), fetchLive()]);
+      const [info, volumes, { live, ts: liveTs }] = await Promise.all([state.api.systemInfo(), state.api.volumes(), fetchLive()]);
       const prev = overviewData || {};
       const verChanged = prev.updateForVersion && info.version && prev.updateForVersion !== info.version;
       overviewData = {
         ...prev,
         info,
         volumes,
-        live,
+        // Keep the last good sample until it goes stale.
+        ...(live ? { live, liveTs } : {}),
         ...(verChanged ? { updateVersion: null, updateCheckedAt: 0 } : {}),
         ts: Date.now(),
         fresh: true
@@ -645,19 +736,20 @@ async function refreshOverview(full = false) {
           saveOverviewCache({ ...overviewData, fresh: false });
         }).catch(() => {}).finally(() => { updateChecking = false; });
       }
-      // REST CPU/memory fallback (~3 s) when no TOS tab is open.
+      // REST CPU/memory fallback (~3 s) when live stats are unavailable.
       if (!live) {
         state.api.hardwareUsage().then((usage) => {
-          overviewData = { ...overviewData, usage };
+          overviewData = { ...overviewData, usage, usageTs: Date.now() };
           if (state.tab === 'overview') drawOverview(panel, overviewData);
           saveOverviewCache({ ...overviewData, fresh: false });
         }).catch(() => {});
       }
     } else {
-      const live = await fetchLive();
-      overviewData = { ...overviewData, live };
+      const { live, ts: liveTs } = await fetchLive();
+      if (live) overviewData = { ...overviewData, live, liveTs };
       if (!live) {
-        overviewData.usage = await state.api.hardwareUsage().catch(() => overviewData.usage);
+        const usage = await state.api.hardwareUsage().catch(() => null);
+        if (usage) overviewData = { ...overviewData, usage, usageTs: Date.now() };
       }
       if (state.tab === 'overview') drawOverview(panel, overviewData);
     }
@@ -679,9 +771,30 @@ async function renderOverview() {
   } else if (!overviewData) {
     loading(panel);
   }
+  if (state.tab === 'overview') startLiveSub();
   await refreshOverview(true);
+  startOverviewTimer();
+}
+
+// Stats are polled only while the Overview tab is shown.
+function startOverviewTimer() {
   clearInterval(overviewTimer);
-  overviewTimer = setInterval(() => { if (state.tab === 'overview') refreshOverview(); }, 5000);
+  if (state.tab !== 'overview' || state.signedOut) return stopOverviewTimer();
+  startLiveSub();
+  startUpdatedTicker();
+  const sec = Math.max(1, Number(state.settings.popup.statsIntervalSec) || 5);
+  overviewTimer = setInterval(() => {
+    if (state.tab === 'overview') refreshOverview();
+    else stopOverviewTimer();
+  }, sec * 1000);
+}
+
+function stopOverviewTimer() {
+  clearInterval(overviewTimer);
+  overviewTimer = null;
+  clearInterval(updatedTicker);
+  updatedTicker = null;
+  stopLiveSub();
 }
 
 // ---- Tabs ----
@@ -701,6 +814,7 @@ function visibleTabs() {
 async function selectTab(name) {
   if (state.signedOut) return;
   state.tab = name;
+  if (name !== 'overview') stopOverviewTimer();
   for (const b of document.querySelectorAll('#tabs button')) {
     b.setAttribute('aria-selected', String(b.dataset.tab === name));
   }
@@ -712,6 +826,7 @@ async function selectTab(name) {
   } else if (name === 'notifications') {
     renderNotifications();
   } else if (name === 'overview') {
+    startOverviewTimer();
     refreshOverview();
   }
 }
@@ -762,6 +877,7 @@ async function init() {
     for (const n of nases) sel.append(el('option', { value: n.id, selected: n.id === state.key }, nasLabel(n)));
     $('#host-row').hidden = false;
     sel.addEventListener('change', async () => {
+      stopOverviewTimer(); // drop the old NAS's subscription
       await useNas(nases.find((n) => n.id === sel.value));
       state.loaded = {};
       state.signedOut = false;

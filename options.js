@@ -32,7 +32,8 @@ for (const input of document.querySelectorAll('[data-section]')) {
     let value;
     if (input.type === 'checkbox') value = input.checked;
     else if (input.type === 'number') {
-      value = Math.min(60, Math.max(0.5, Number(input.value) || 1));
+      const min = Number(input.min), max = Number(input.max);
+      value = Math.min(max, Math.max(min, Number(input.value) || min));
       input.value = value;
     } else value = input.value;
     await saveSection(input.dataset.section, { [input.dataset.key]: value });

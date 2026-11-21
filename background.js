@@ -300,14 +300,20 @@ async function openInTos(host, kind, arg) {
   });
 }
 
-// Runs inside an open TOS tab so the message-bus WebSocket uses the signed-in session.
+const LIVE_TOPICS = ['cpu', 'mem', 'load', 'temp', 'net'];
+
+function msgBusUrl(origin) {
+  const { protocol, host } = new URL(origin);
+  return `${protocol === 'http:' ? 'ws' : 'wss'}://${host}/msg_bus?token=${encodeURIComponent(btoa(new Date().toUTCString()))}`;
+}
+
+// Fallback, injected into an open TOS tab: reads each topic's last published sample.
+// TOS only samples while a client is subscribed, so this is current only while the TOS
+// desktop is open.
 function collectLiveStats() {
   return new Promise((resolve) => {
-    const cookie = (name) => {
-      const c = document.cookie.split('; ').find((x) => x.startsWith(name + '='));
-      return c ? decodeURIComponent(c.slice(name.length + 1)) : '';
-    };
-    const user = cookie('userName');
+    const c = document.cookie.split('; ').find((x) => x.startsWith('userName='));
+    const user = c ? decodeURIComponent(c.slice('userName='.length)) : '';
     const topics = ['cpu', 'mem', 'load', 'temp', 'net'];
     const out = {};
     let sid = '';
@@ -346,8 +352,8 @@ function collectLiveStats() {
   });
 }
 
-// Queries any open TOS tab for the NAS; returns null if none is open.
-async function liveStats(hosts) {
+// Reads stats from any open TOS tab for the NAS; null if none is open.
+async function liveStatsFromTab(hosts) {
   const tabs = await chrome.tabs.query({ url: hosts.map((h) => h + '/*') });
   // Prefer active, non-discarded tabs.
   tabs.sort((a, b) => (a.discarded - b.discarded) || (b.active - a.active));
@@ -360,6 +366,84 @@ async function liveStats(hosts) {
   }
   return null;
 }
+
+// Live subscription for the popup's Overview tab. The popup holds a port open while Overview
+// is shown; this subscribes to the message bus (TOS samples only while someone is subscribed),
+// forwards each push, and unsubscribes when the port closes. The session header rules attach
+// the TOS cookies and Origin, so no TOS tab is needed.
+const LIVE_FIRST_SAMPLE_MS = 15000;
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'liveStats') return;
+  let ws = null;
+  let sid = '';
+  let user = '';
+  let closed = false;
+  let firstTimer = null;
+  const out = {};
+
+  const post = (msg) => { if (!closed) try { port.postMessage(msg); } catch (e) { /* popup gone */ } };
+  const send = (type, data, module = '') =>
+    ws.send(JSON.stringify({ type, data, session_id: sid, time: Date.now(), user, module }));
+  const shutdown = () => {
+    clearTimeout(firstTimer);
+    if (!ws) return;
+    try {
+      if (ws.readyState === WebSocket.OPEN && sid) {
+        for (const t of LIVE_TOPICS) send(1, JSON.stringify({ topic: t, action: 'unsub' }), 'tosd/v1/events');
+      }
+      ws.close();
+    } catch (e) { /* ignore */ }
+    ws = null;
+  };
+  const fail = (error) => {
+    console.warn('[TOS Companion] live stats subscription failed:', error);
+    post({ type: 'error', error });
+    shutdown();
+  };
+
+  port.onDisconnect.addListener(() => { closed = true; shutdown(); });
+  port.onMessage.addListener(async (msg) => {
+    if (ws || !msg || !msg.host) return;
+    const host = msg.host;
+    if (!(await hasHostPermission(host))) return fail('permission');
+    if (!ruleOrigins.includes(host)) await syncHeaderRules(await allowedOrigins());
+    try {
+      const c = await chrome.cookies.get({ url: host + '/', name: 'userName' });
+      user = c ? decodeURIComponent(c.value) : '';
+    } catch (e) { /* ignore */ }
+    if (!user) return fail('signedout');
+    if (closed) return;
+    try {
+      ws = new WebSocket(msgBusUrl(host));
+    } catch (e) {
+      return fail(String(e));
+    }
+    firstTimer = setTimeout(() => fail('timeout'), LIVE_FIRST_SAMPLE_MS);
+    ws.onopen = () => send(0, '');
+    ws.onmessage = (e) => {
+      let o;
+      try { o = JSON.parse(e.data); } catch (err) { return; }
+      if (o.type === 0) {
+        if (!o.is_ok) return fail('auth');
+        sid = o.session_id;
+        send(4, JSON.stringify('tosd/v1/events'), 'tosd/v1/events');
+      } else if (o.type === 4) {
+        for (const t of LIVE_TOPICS) send(1, JSON.stringify({ topic: t, action: 'sub' }), 'tosd/v1/events');
+      } else if (o.type === 1) {
+        try {
+          const d = JSON.parse(o.data);
+          if (!LIVE_TOPICS.includes(d.topic) || !d.data || !d.data.instant) return; // e.g. sub acks
+          out[d.topic] = d.data.instant;
+          clearTimeout(firstTimer);
+          post({ type: 'stats', data: { ...out } });
+        } catch (err) { /* ignore */ }
+      }
+    };
+    ws.onerror = () => fail('socket');
+    ws.onclose = () => { if (ws) fail('closed'); };
+  });
+});
 
 // mode: 'terminal' | 'logs'
 async function openDockerPage(host, container, mode) {
@@ -386,7 +470,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case 'openDockerLogs': await openDockerPage(msg.host, msg.container, 'logs'); break;
       case 'markNotificationsSeen': await setSeen(msg.key, msg.maxId); await updateBadge(); break;
       case 'refreshBadge': await updateBadge(); break;
-      case 'liveStats': return liveStats(msg.hosts || [msg.host]);
+      case 'liveStats': return liveStatsFromTab(msg.hosts || [msg.host]);
       case 'syncRules': await syncHeaderRules(await allowedOrigins()); break;
     }
   })()
