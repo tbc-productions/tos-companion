@@ -17,12 +17,14 @@ A Chrome and Microsoft Edge extension for quick access to your TerraMaster NAS (
 
 Requires Chrome or Microsoft Edge (116 or later) and TerraMaster TOS 7.
 
-Install from the Chrome Web Store *(coming soon)*, or manually:
+**[Install from the Chrome Web Store](https://chromewebstore.google.com/detail/tos-companion-for-terrama/lkhbcgmcpkbaeaoeppghoicfdllmkbgh)**. In Microsoft Edge, turn on **Allow extensions from other stores** when prompted. After installing, add your NAS address (e.g. `https://192.168.1.10:5443`) in settings and allow access.
+
+### Manual install
 
 1. Download and unzip the latest release (or clone this repo).
 2. Open `chrome://extensions` or `edge://extensions` and turn on **Developer mode**.
 3. Click **Load unpacked** and select the extracted folder.
-4. Add your NAS address (e.g. `https://192.168.1.10:5443`) in settings and allow access.
+4. Add your NAS address in settings and allow access.
 
 ## Privacy
 
