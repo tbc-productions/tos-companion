@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TOS Companion for TerraMaster",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Your TerraMaster NAS in one click: apps, notifications, Docker and system stats, plus a better TOS 7 terminal. Unofficial.",
   "minimum_chrome_version": "116",
   "permissions": [
