@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>TOS Companion</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <nav id="tabs" role="tablist">
+      <button role="tab" data-tab="overview" id="tab-overview">Overview</button>
+      <button role="tab" data-tab="apps" id="tab-apps">Apps</button>
+      <button role="tab" data-tab="notifications" id="tab-notifications">Notifications <span class="count" id="notif-count" hidden></span></button>
+      <button role="tab" data-tab="docker" id="tab-docker">Docker</button>
+    </nav>
+    <button class="icon-btn" id="open-settings" title="TOS Companion settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M19.14 12.94a7.4 7.4 0 0 0 .05-.94 7.4 7.4 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7 7 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7 7 0 0 0-1.62.94l-2.39-.96a.5.5 0 0 0-.6.22L2.67 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.4 7.4 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.3.6.22l2.39-.96c.5.38 1.04.7 1.62.94l.36 2.54c.04.24.25.42.5.42h3.84c.25 0 .46-.18.5-.42l.36-2.54a7 7 0 0 0 1.62-.94l2.39.96c.22.08.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/></svg>
+    </button>
+  </header>
+
+  <div id="host-row" hidden>
+    <select id="host-select" aria-label="TOS address"></select>
+  </div>
+
+  <main>
+    <section id="panel-overview" data-panel="overview" hidden></section>
+    <section id="panel-apps" data-panel="apps" hidden></section>
+    <section id="panel-notifications" data-panel="notifications" hidden></section>
+    <section id="panel-docker" data-panel="docker" hidden></section>
+    <section id="panel-empty" hidden>
+      <p class="empty">All tabs are hidden. Turn them back on in settings.</p>
+    </section>
+  </main>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>TOS Companion settings</title>
+<style>
+  :root { --bg: #fff; --fg: #1f2328; --fg-2: #5b6370; --border: #dcdfe3; --card: #f6f7f9; --accent: #1a73e8; --warn: #b45309; --err: #b91c1c; color-scheme: light; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1f2023; --fg: #e8eaed; --fg-2: #a9afb8; --border: #3a3d43; --card: #27292d; --accent: #8ab4f8; --warn: #f2b84b; --err: #f28b82; color-scheme: dark; }
+  }
+  body { font: 14px/1.45 system-ui, -apple-system, sans-serif; margin: 16px; min-width: 420px; max-width: 560px; color: var(--fg); background: var(--bg); }
+  h1 { font-size: 16px; margin: 0 0 12px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--fg-2); margin: 22px 0 8px; }
+  ul { list-style: none; padding: 0; margin: 0 0 8px; }
+  li { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; }
+  .nas { border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+  .nas-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .nas-head input { flex: 1; font-weight: 600; }
+  .nas ul { margin: 0 0 6px; }
+  .nas li { margin-bottom: 4px; }
+  .nas .row input { font-size: 13px; }
+  li .addr { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .tag { font-size: 11px; padding: 1px 6px; border-radius: 9px; background: var(--card); color: var(--fg-2); border: 1px solid var(--border); margin-left: 6px; }
+  .warn { color: var(--warn); font-size: 12px; margin-left: 6px; }
+  .row { display: flex; gap: 6px; }
+  input[type=text], select, input[type=number] { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
+  input[type=text] { flex: 1; }
+  input[type=number] { width: 64px; }
+  button { padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--fg); cursor: pointer; font: inherit; }
+  label.opt { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; }
+  label.opt input { margin-top: 3px; }
+  .hint { color: var(--fg-2); font-size: 12px; }
+  .inline { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+  #msg { color: var(--err); font-size: 12px; min-height: 1em; margin-top: 4px; }
+  #welcome { padding: 10px 12px; border: 1px solid var(--accent); border-radius: 8px; margin-bottom: 8px; }
+  #welcome p { margin: 0 0 6px; }
+  #welcome p:last-child { margin: 0; }
+  #saved { color: var(--fg-2); font-size: 12px; height: 1em; }
+</style>
+</head>
+<body>
+  <h1>TOS Companion</h1>
+  <div id="welcome" hidden>
+    <p><strong>Welcome!</strong> Add your TerraMaster NAS address below to get started. Use the address you open TOS 7 at in Chrome, e.g. <code>https://192.168.1.10:5443</code>. Chrome will ask you to allow access to it.</p>
+    <p class="hint">TOS Companion only talks to the addresses you add here, using your existing TOS sign-in. Nothing is sent anywhere else. It is not affiliated with TerraMaster.</p>
+  </div>
+  <div id="saved"></div>
+
+  <h2>Your NAS</h2>
+  <div id="nases"></div>
+  <div class="row">
+    <input type="text" id="newHost" placeholder="Add a NAS, e.g. https://192.168.1.10:5443">
+    <button id="add">Add NAS</button>
+  </div>
+  <div id="msg"></div>
+  <p class="hint">If you reach the same NAS at more than one address, like a domain and a local IP, add them all to that NAS with “Add address”. The popup uses whichever one works, preferring one you’re signed in to. The default NAS is used by the popup and the badge.</p>
+
+  <h2>Popup</h2>
+  <label class="opt"><input type="checkbox" data-section="popup" data-key="showApps">
+    <span>Apps tab<br><span class="hint">Launch any installed TOS app.</span></span></label>
+  <label class="opt"><input type="checkbox" data-section="popup" data-key="showNotifications">
+    <span>Notifications tab<br><span class="hint">Read, open and dismiss TOS notifications.</span></span></label>
+  <label class="opt"><input type="checkbox" data-section="popup" data-key="showDocker">
+    <span>Docker tab<br><span class="hint">Start, stop and restart Container Manager projects and containers, and open a container's terminal.</span></span></label>
+  <div class="inline">
+    <span>Open the popup on</span>
+    <select data-section="popup" data-key="defaultTab">
+      <option value="last">The last tab I used</option>
+      <option value="overview">Overview</option>
+      <option value="apps">Apps</option>
+      <option value="notifications">Notifications</option>
+      <option value="docker">Docker</option>
+    </select>
+  </div>
+
+  <h2>Toolbar badge</h2>
+  <label class="opt"><input type="checkbox" data-section="badge" data-key="enabled">
+    <span>Show unread notifications on the toolbar icon<br><span class="hint">Opening the Notifications tab marks them as read. Uses your default TOS address.</span></span></label>
+  <div class="inline">
+    <span>Show as</span>
+    <select data-section="badge" data-key="style">
+      <option value="count">A number</option>
+      <option value="dot">A red dot</option>
+    </select>
+  </div>
+  <div class="inline">
+    <span>Check every</span>
+    <input type="number" min="0.5" max="60" step="0.5" data-section="badge" data-key="intervalMin">
+    <span>minutes</span>
+  </div>
+
+  <h2>Terminal</h2>
+  <label class="opt"><input type="checkbox" data-section="features" data-key="terminalCopy">
+    <span>Terminal copy<br><span class="hint">Copy from the TOS terminal works, including Claude Code's drag-to-copy (OSC 52). On Mac, Option+drag forces a normal selection.</span></span></label>
+  <label class="opt"><input type="checkbox" data-section="features" data-key="terminalLinks">
+    <span>Clickable URLs<br><span class="hint" id="links-hint">Cmd+click a URL to open it, even inside programs that use the mouse (Claude Code, vim, tmux) and when the URL wraps onto the next line.</span></span></label>
+  <label class="opt"><input type="checkbox" data-section="features" data-key="terminalSearch">
+    <span>Search<br><span class="hint" id="search-hint">Cmd+F searches the terminal's scrollback. Enter goes to the previous match, Shift+Enter to the next, Esc closes.</span></span></label>
+  <p class="hint">Reload any open TOS tabs after changing terminal settings.</p>
+
+  <h2>Cache</h2>
+  <div class="inline">
+    <button id="clear-cache">Clear cached data</button>
+    <span class="hint" id="cache-msg"></span>
+  </div>
+  <p class="hint">The popup saves app icons, Docker status and the Overview so it opens instantly. Clearing makes it load everything fresh from TOS next time. Notifications are always loaded fresh.</p>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

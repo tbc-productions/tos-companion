@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (leave blank to use v<manifest version>)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and verify extension zip
+        id: build
+        shell: bash
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          jq empty manifest.json
+          VERSION=$(jq -r '.version // empty' manifest.json)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not read version from manifest.json"
+            exit 1
+          fi
+
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG="${INPUT_TAG:-v${VERSION}}"
+          else
+            TAG="${REF_NAME}"
+          fi
+
+          TAG_VERSION="${TAG#v}"
+          TAG_BASE="${TAG_VERSION%%-*}"
+          if [ "$TAG_BASE" != "$VERSION" ]; then
+            echo "::error::Tag ${TAG} (version ${TAG_BASE}) does not match manifest.json version ${VERSION}"
+            exit 1
+          fi
+
+          PRERELEASE=false
+          case "$TAG" in
+            *-*) PRERELEASE=true ;;
+          esac
+
+          ZIP_PATH=$(sh scripts/package.sh)
+          unzip -tq "$ZIP_PATH"
+          unzip -l "$ZIP_PATH"
+
+          {
+            echo "version=${VERSION}"
+            echo "tag=${TAG}"
+            echo "prerelease=${PRERELEASE}"
+            echo "zip_path=${ZIP_PATH}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tos-companion-${{ steps.build.outputs.version }}
+          path: ${{ steps.build.outputs.zip_path }}
+
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.build.outputs.tag }}
+          PRERELEASE: ${{ steps.build.outputs.prerelease }}
+          ZIP_PATH: ${{ steps.build.outputs.zip_path }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP_PATH" --clobber
+          else
+            set -- release create "$TAG" "$ZIP_PATH" \
+              --target "$GITHUB_SHA" \
+              --title "TOS Companion ${TAG}" \
+              --generate-notes
+            if [ "$PRERELEASE" = "true" ]; then
+              set -- "$@" --prerelease
+            fi
+            gh "$@"
+          fi

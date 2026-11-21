@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (leave blank to use v<manifest version>)'
+        required: false
+        type: string
+
+jobs:
+  release:
+    if: github.server_url != 'https://github.com'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure packaging tools are installed
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for cmd in zip unzip curl jq; do
+            command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            if [ "$(id -u)" -eq 0 ]; then
+              apt-get update && apt-get install -y --no-install-recommends "${missing[@]}" ca-certificates
+            else
+              sudo apt-get update && sudo apt-get install -y --no-install-recommends "${missing[@]}" ca-certificates
+            fi
+          fi
+
+      - name: Build and verify extension zip
+        id: build
+        shell: bash
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          jq empty manifest.json
+          VERSION=$(jq -r '.version // empty' manifest.json)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not read version from manifest.json"
+            exit 1
+          fi
+
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG="${INPUT_TAG:-v${VERSION}}"
+          else
+            TAG="${REF_NAME}"
+          fi
+
+          TAG_VERSION="${TAG#v}"
+          TAG_BASE="${TAG_VERSION%%-*}"
+          if [ "$TAG_BASE" != "$VERSION" ]; then
+            echo "::error::Tag ${TAG} (version ${TAG_BASE}) does not match manifest.json version ${VERSION}"
+            exit 1
+          fi
+
+          PRERELEASE=false
+          case "$TAG" in
+            *-*) PRERELEASE=true ;;
+          esac
+
+          ZIP_PATH=$(sh scripts/package.sh)
+          unzip -tq "$ZIP_PATH"
+          unzip -l "$ZIP_PATH"
+
+          {
+            echo "version=${VERSION}"
+            echo "tag=${TAG}"
+            echo "prerelease=${PRERELEASE}"
+            echo "zip_path=${ZIP_PATH}"
+            echo "asset_name=$(basename "$ZIP_PATH")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish Gitea release
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.CI_TOKEN || github.token }}
+          TAG: ${{ steps.build.outputs.tag }}
+          PRERELEASE: ${{ steps.build.outputs.prerelease }}
+          ZIP_PATH: ${{ steps.build.outputs.zip_path }}
+          ASSET_NAME: ${{ steps.build.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+          : "${TOKEN:?Set the CI_TOKEN secret to publish Gitea releases}"
+          API="${GITHUB_SERVER_URL}/api/v1/repos/${GITHUB_REPOSITORY}"
+
+          HTTP=$(curl -sS -o /tmp/release.json -w '%{http_code}' \
+            -H "Authorization: token ${TOKEN}" \
+            "${API}/releases/tags/${TAG}")
+
+          if [ "$HTTP" = "200" ]; then
+            RELEASE_ID=$(jq -r .id /tmp/release.json)
+            echo "Reusing existing release ${RELEASE_ID} for ${TAG}"
+          elif [ "$HTTP" = "404" ]; then
+            BODY=$(jq -n \
+              --arg tag "$TAG" \
+              --arg sha "$GITHUB_SHA" \
+              --arg name "TOS Companion ${TAG}" \
+              --argjson prerelease "$PRERELEASE" \
+              '{tag_name:$tag, target_commitish:$sha, name:$name, draft:false, prerelease:$prerelease}')
+
+            CREATE_HTTP=$(curl -sS -o /tmp/release.json -w '%{http_code}' -X POST \
+              -H "Authorization: token ${TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data-binary "$BODY" \
+              "${API}/releases")
+
+            if [ "$CREATE_HTTP" = "201" ] || [ "$CREATE_HTTP" = "200" ]; then
+              RELEASE_ID=$(jq -r .id /tmp/release.json)
+              echo "Created release ${RELEASE_ID} for ${TAG}"
+            elif [ "$CREATE_HTTP" = "409" ]; then
+              RELEASE_ID=$(curl -fsS -H "Authorization: token ${TOKEN}" "${API}/releases" \
+                | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | .id' | head -n 1)
+              if [ -z "$RELEASE_ID" ]; then
+                echo "::error::Release for ${TAG} already exists (HTTP 409) but could not be resolved"
+                cat /tmp/release.json || true
+                exit 1
+              fi
+              echo "Reusing existing release ${RELEASE_ID} for ${TAG}"
+            else
+              echo "::error::Failed to create release (HTTP ${CREATE_HTTP})"
+              cat /tmp/release.json || true
+              exit 1
+            fi
+          else
+            echo "::error::Unexpected HTTP ${HTTP} looking up release for ${TAG}"
+            cat /tmp/release.json || true
+            exit 1
+          fi
+
+          EXISTING_ID=$(curl -fsS -H "Authorization: token ${TOKEN}" \
+            "${API}/releases/${RELEASE_ID}/assets" \
+            | jq -r --arg name "$ASSET_NAME" '.[] | select(.name == $name) | .id' | head -n 1)
+
+          if [ -n "$EXISTING_ID" ]; then
+            echo "Replacing existing asset ${ASSET_NAME} (id=${EXISTING_ID})"
+            curl -fsS -X DELETE \
+              -H "Authorization: token ${TOKEN}" \
+              "${API}/releases/${RELEASE_ID}/assets/${EXISTING_ID}"
+          fi
+
+          curl -fsS -X POST \
+            -H "Authorization: token ${TOKEN}" \
+            -F "attachment=@${ZIP_PATH}" \
+            "${API}/releases/${RELEASE_ID}/assets" > /dev/null
+
+          echo "Uploaded ${ASSET_NAME} to release ${TAG}"
