@@ -12,6 +12,8 @@ TOS Companion is a Chrome and Microsoft Edge extension for the web interface of 
 
 **Removing data.** Uninstalling the extension deletes everything it stored.
 
-**Contact.** Questions? Open an issue on the project's Git repository.
+**Contact.** Questions? Open an issue on the [project's GitHub repository](https://github.com/tbc-productions/tos-companion/issues).
+
+**Source code.** The extension is open source: [github.com/tbc-productions/tos-companion](https://github.com/tbc-productions/tos-companion).
 
 TOS Companion is not affiliated with TerraMaster.
