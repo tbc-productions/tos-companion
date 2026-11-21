@@ -528,9 +528,12 @@ function staleAfterMs() {
 
 let staleTimer = null;
 
-function updatedText(ts) {
-  const s = agoText((Date.now() - ts) / 1000, true);
-  return 'Updated ' + s;
+// Shows "Updated …" only once stats are 10 s or older; space is kept so the layout doesn't jump.
+function setUpdated(node, ts) {
+  const sec = (Date.now() - ts) / 1000;
+  const show = sec >= 10;
+  node.style.visibility = show ? '' : 'hidden';
+  node.textContent = show ? 'Updated ' + agoText(sec, true) : '\u00a0';
 }
 
 // Keeps the relative "Updated …" label current between redraws.
@@ -539,7 +542,7 @@ function startUpdatedTicker() {
   if (updatedTicker) return;
   updatedTicker = setInterval(() => {
     const u = document.querySelector('#panel-overview .updated');
-    if (u && u.dataset.ts) u.textContent = updatedText(Number(u.dataset.ts));
+    if (u && u.dataset.ts) setUpdated(u, Number(u.dataset.ts));
   }, 1000);
 }
 
@@ -618,7 +621,9 @@ function drawOverview(panel, data) {
   const lastTs = Math.max(data.liveTs || 0, data.usageTs || 0);
   if (lastTs) {
     const d = new Date(lastTs);
-    nodes.push(el('div', { class: 'updated', title: d.toLocaleString(), 'data-ts': String(lastTs) }, updatedText(lastTs)));
+    const u = el('div', { class: 'updated', title: d.toLocaleString(), 'data-ts': String(lastTs) });
+    setUpdated(u, lastTs);
+    nodes.push(u);
   }
 
   const scroll = panel.parentElement ? panel.parentElement.scrollTop : 0;
